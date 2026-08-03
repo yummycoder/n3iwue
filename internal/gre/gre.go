@@ -62,7 +62,7 @@ func SetupGreTunnel(
 	newGRETunnel := &netlink.Gretun{
 		LinkAttrs: netlink.LinkAttrs{
 			Name: newGreIfaceName,
-			MTU:  1438, // remain for endpoint IP header(most 40 bytes if IPv6) and ESP header (22 bytes)
+			MTU: parent.Attrs().MTU - 108, // GRE-over-IP delivery (28) + peer xfrmi ESP overhead (~73) + margin: keeps DL GRE packets under the N3IWF return path's effective MTU
 		},
 		Link:   uint32(parent.Attrs().Index), // PHYS_DEV in iproute2; IFLA_GRE_LINK in linux kernel
 		Local:  ueTunnelAddr,

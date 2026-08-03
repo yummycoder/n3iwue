@@ -17,3 +17,9 @@ log/
 *.log
 *.pcap
 n3iwue
+n3iwue
+*.orig
+*.bak
+*.pre-auth
+*.log
+*.pcap
