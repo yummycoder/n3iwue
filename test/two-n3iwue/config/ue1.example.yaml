@@ -1,0 +1,37 @@
+info:
+    version: 1.0.1
+    description: Two-N3IWUE acceptance test - UE1
+configuration:
+    N3IWFInformation:
+        IPSecIfaceAddr: 192.168.2.2
+        IPsecInnerAddr: 10.0.0.1
+    N3UEInformation:
+        VisitedPLMN: {MCC: "208", MNC: "93"}
+        IMSI:
+            PLMNID: {MCC: "208", MNC: "93"}
+            MSIN: "CHANGE_ME_MSIN_UE1"
+        AMFID: cafe00
+        IPSecIfaceName: enp7s0
+        IPSecIfaceAddr: 192.168.2.1
+        DnIPAddr:
+        XfrmiId: 1
+        XfrmiName: ipsec
+        GreIfaceName: gretun
+        IkeSaSPI: 0x000000000006f708
+        IPSecSA3gppControlPlaneSPI: 0x00000002
+        RequestedPDUSessionIDs: [10]
+        SmPolicy:
+            - DNN: internet
+              SNSSAI: {SST: "1", SD: "010203"}
+        DpdInterval: 60s
+        IkeRetransmit: {enable: true, base: 1, expireTime: 2s, maxRetryTimes: 3}
+        AutoReRegistration: false
+        Security:
+            K: "CHANGE_ME_K_UE1"
+            RAND: "CHANGE_ME_RAND_UE1"
+            SQN: "CHANGE_ME_SQN_UE1"
+            AMF: "8000"
+            OP: "CHANGE_ME_OP_UE1"
+            OPC: "CHANGE_ME_OPC_UE1"
+logger:
+    N3UE: {debugLevel: trace, ReportCaller: false}
