@@ -61,14 +61,14 @@ func NewSuccessRegistrationEvt() *SuccessRegistrationEvt {
 	return &SuccessRegistrationEvt{}
 }
 
-type PduSessionEstablishedEvt struct{}
+type PduSessionEstablishedEvt struct{ PduSessionID uint8 }
 
 func (evt *PduSessionEstablishedEvt) Type() ProcedureEventType {
 	return PduSessionEstablished
 }
 
-func NewPduSessionEstablishedEvt() *PduSessionEstablishedEvt {
-	return &PduSessionEstablishedEvt{}
+func NewPduSessionEstablishedEvt(pduSessionID uint8) *PduSessionEstablishedEvt {
+	return &PduSessionEstablishedEvt{PduSessionID: pduSessionID}
 }
 
 type DeregistrationCompleteEvt struct{}

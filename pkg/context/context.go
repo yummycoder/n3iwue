@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/big"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -37,28 +38,31 @@ const (
 )
 
 type N3UE struct {
-	N3IWFUe              *N3IWFIkeUe
-	N3IWFRanUe           *N3IWFRanUe
-	N3ueInfo             factory.N3UEInfo
-	N3iwfInfo            factory.N3IWFInfo
-	RanUeContext         *security.RanUeContext
-	MobileIdentity5GS    nasType.MobileIdentity5GS
-	IkeInitiatorSPI      uint64
-	Secert               *big.Int
-	Factor               *big.Int
-	Proposal             *message.Proposal
-	LocalNonce           []byte
-	SecurityAssociation  *message.SecurityAssociation
-	AttributeType        uint16
-	KeyLength            uint16
-	UESecurityCapability *nasType.UESecurityCapability
-	UEInnerAddr          *net.IPNet
-	N3iwfNASAddr         *net.TCPAddr
-	PduSessionCount      uint8
-	CreatedIface         []*netlink.Link
-	Kn3iwf               []uint8
-	GUTI                 *nasType.GUTI5G
-	IKEConnection        map[int]*UDPSocketInfo
+	N3IWFUe                *N3IWFIkeUe
+	N3IWFRanUe             *N3IWFRanUe
+	N3ueInfo               factory.N3UEInfo
+	N3iwfInfo              factory.N3IWFInfo
+	RanUeContext           *security.RanUeContext
+	MobileIdentity5GS      nasType.MobileIdentity5GS
+	IkeInitiatorSPI        uint64
+	Secert                 *big.Int
+	Factor                 *big.Int
+	Proposal               *message.Proposal
+	LocalNonce             []byte
+	SecurityAssociation    *message.SecurityAssociation
+	AttributeType          uint16
+	KeyLength              uint16
+	UESecurityCapability   *nasType.UESecurityCapability
+	UEInnerAddr            *net.IPNet
+	N3iwfNASAddr           *net.TCPAddr
+	RequestedPduSessionIDs []uint8
+	PendingPduSessionID    uint8
+	PduSessions            map[uint8]*PDUSession
+	PduSessionsMu          sync.RWMutex
+	CreatedIface           []*netlink.Link
+	Kn3iwf                 []uint8
+	GUTI                   *nasType.GUTI5G
+	IKEConnection          map[int]*UDPSocketInfo
 
 	// Temporary data , used to create GreTunnel
 	TemporaryXfrmiName string
@@ -195,16 +199,16 @@ type IKESecurityAssociation struct {
 func (ikeSA *IKESecurityAssociation) String() string {
 	return "====== IKE Security Association Info =====" +
 		"\nInitiator's SPI: " + fmt.Sprintf("%016x", ikeSA.LocalSPI) +
-		"\nResponder's SPI: " + fmt.Sprintf("%016x", ikeSA.RemoteSPI) +
-		"\nIKESAKey: " + ikeSA.IKESAKey.String()
+		"\nResponder's SPI: " + fmt.Sprintf("%016x", ikeSA.RemoteSPI)
 }
 
 type ChildSecurityAssociation struct {
 	*ike_security.ChildSAKey
 
 	// SPI
-	InboundSPI  uint32 // N3IWF Specify
-	OutboundSPI uint32 // Non-3GPP UE Specify
+	InboundSPI   uint32 // N3IWF Specify
+	OutboundSPI  uint32 // Non-3GPP UE Specify
+	PduSessionID uint8
 
 	// Associated XFRM interface
 	XfrmIface netlink.Link

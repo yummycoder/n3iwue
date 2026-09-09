@@ -1,5 +1,26 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
+SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+BINARY=$SCRIPT_DIR/n3iwue
+CONFIG_FILE=${1:-$SCRIPT_DIR/config/n3ue.yaml}
+if [[ ! -f "$CONFIG_FILE" ]]; then
+    echo "Configuration file not found: $CONFIG_FILE" >&2
+    exit 1
+fi
+CONFIG_FILE=$(readlink -f "$CONFIG_FILE")
+if [[ ! -x "$BINARY" ]]; then
+    echo "N3IWUE binary not found: $BINARY" >&2
+    echo "Build it with: cd $SCRIPT_DIR && CGO_ENABLED=0 go build -o n3iwue ./n3iwue.go" >&2
+    exit 1
+fi
+if find "$SCRIPT_DIR" -path "$SCRIPT_DIR/.git" -prune -o -name '*.go' -newer "$BINARY" -print -quit | grep -q .; then
+    echo "N3IWUE binary is older than the Go source and may not support -config." >&2
+    echo "Rebuild it with: cd $SCRIPT_DIR && CGO_ENABLED=0 go build -o n3iwue ./n3iwue.go" >&2
+    exit 1
+fi
+
 sudo -v
 
 PID_LIST=()
@@ -7,39 +28,21 @@ PID_LIST=()
 function terminate()
 {
     sleep 1
-    sudo ./clean.sh
+    sudo "$SCRIPT_DIR/clean.sh"
 
-    sudo kill -SIGTERM ${PID_LIST[@]}
+    if ((${#PID_LIST[@]})); then
+        sudo kill -SIGTERM "${PID_LIST[@]}" 2>/dev/null || true
+    fi
 }
 
-function dump()
-{
-    LOG_PATH=log
-    mkdir -p ${LOG_PATH}
-    N3UE_IPSec_iface_addr=10.0.1.2
-    N3IWF_IPsec_inner_addr=10.0.0.1
-    UE_DN_addr=10.60.0.1
-
-    TCPDUMP_QUERY=" host $N3UE_IPSec_iface_addr or \
-                    host $N3IWF_IPsec_inner_addr or \
-                    host $UE_DN_addr"
-    sudo -E tcpdump -U -i any $TCPDUMP_QUERY -w $LOG_PATH/n3ue.pcap &
-    SUDO_TCPDUMP_PID=$!
-    sleep 0.1
-    TCPDUMP_PID=$(pgrep -P ${SUDO_TCPDUMP_PID})
-    PID_LIST+=($SUDO_TCPDUMP_PID $TCPDUMP_PID)
-}
-
-dump
-sleep 1
-
-# Run N3UE
-sudo ./n3iwue &
+# Run N3UE without packet capture. Keep stdout/stderr on the terminal.
+cd "$SCRIPT_DIR"
+sudo "$BINARY" -config "$CONFIG_FILE" &
 SUDO_N3UE_PID=$!
 sleep 0.1
 echo SUDO_N3UE_PID $SUDO_N3UE_PID
-N3UE_PID=$(pgrep -P ${SUDO_N3UE_PID})
-PID_LIST+=($SUDO_N3UE_PID $N3UE_PID)
+N3UE_PID=$(pgrep -P "${SUDO_N3UE_PID}")
+PID_LIST+=("$SUDO_N3UE_PID" "$N3UE_PID")
 echo N3UE_PID ${N3UE_PID}
 
 trap terminate SIGINT

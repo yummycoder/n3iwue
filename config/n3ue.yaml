@@ -23,6 +23,7 @@ configuration:
         GreIfaceName: gretun # prefix of GRE interface created
         IkeSaSPI: 0x000000000006f708 # IKE SA SPI (hex string, 8 octets)
         IPSecSA3gppControlPlaneSPI: 0x00000002 # IPsec/Child SA SPI for 3GPP Control Plane (hex string, 4 octets)
+        RequestedPDUSessionIDs: [10] # PDU session IDs to establish sequentially (1..15)
         SmPolicy: # DNN and Network Slice Requested by N3UE
             - DNN: internet
               SNSSAI: # Single Network Slice Selection Assistance Information

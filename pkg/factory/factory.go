@@ -17,8 +17,21 @@ var (
 )
 var filePath string
 
-func Initialize() error {
-	if err := InitConfigFactory("./config/n3ue.yaml"); err != nil {
+func Initialize(configPaths ...string) error {
+	configPath := filePath
+	if configPath == "" {
+		configPath = "./config/n3ue.yaml"
+	}
+	if len(configPaths) > 1 {
+		return errors.New("only one config path may be supplied")
+	}
+	if len(configPaths) == 1 {
+		configPath = configPaths[0]
+	}
+	if configPath == "" {
+		return errors.New("config path must not be empty")
+	}
+	if err := InitConfigFactory(configPath); err != nil {
 		return fmt.Errorf("factory.InitConfigFactory: %+v", err)
 	}
 	if _, err := N3ueConfig.Validate(); err != nil {
@@ -114,7 +127,7 @@ func checkConfigVersion() error {
 }
 
 func SyncConfigSQN(sqn uint64) error {
-	logger.CfgLog.Infof("Write SQN=%012x into config file", sqn)
+	logger.CfgLog.Info("Write updated SQN into config file")
 	if err := WriteConfigWithKey("SQN", fmt.Sprintf("%012x", sqn)); err != nil {
 		return fmt.Errorf("write config file: %+v", err)
 	}

@@ -197,7 +197,8 @@ func (s *Server) handleIKESAINIT(
 		return
 	}
 
-	ikeLog.Tracef("%v", ikeSecurityAssociation.String())
+	ikeLog.Tracef("IKE SA established: initiator SPI=%016x responder SPI=%016x",
+		ikeSecurityAssociation.LocalSPI, ikeSecurityAssociation.RemoteSPI)
 	n3ueSelf.N3IWFUe.N3IWFIKESecurityAssociation = ikeSecurityAssociation
 
 	// Stop continuous IKE_SA_INIT timer as IKE SA is now established
@@ -608,16 +609,8 @@ func (s *Server) handleIKEAUTH(
 			childSecurityAssociationContext.EncrKInfo.TransformID(),
 		)
 		ikeLog.Debugf(
-			"IPSec Encryption Key: 0x%x",
-			childSecurityAssociationContext.ResponderToInitiatorEncryptionKey,
-		)
-		ikeLog.Debugf(
 			"IPSec Integrity  Algorithm: %d",
 			childSecurityAssociationContext.IntegKInfo.TransformID(),
-		)
-		ikeLog.Debugf(
-			"IPSec Integrity  Key: 0x%x",
-			childSecurityAssociationContext.ResponderToInitiatorIntegrityKey,
 		)
 		// ====== Outbound ======
 		ikeLog.Debugln("====== IPSec/Child SA for 3GPP CP Outbound =====")
@@ -632,16 +625,8 @@ func (s *Server) handleIKEAUTH(
 			childSecurityAssociationContext.EncrKInfo.TransformID(),
 		)
 		ikeLog.Debugf(
-			"IPSec Encryption Key: 0x%x",
-			childSecurityAssociationContext.InitiatorToResponderEncryptionKey,
-		)
-		ikeLog.Debugf(
 			"IPSec Integrity  Algorithm: %d",
 			childSecurityAssociationContext.IntegKInfo.TransformID(),
-		)
-		ikeLog.Debugf(
-			"IPSec Integrity  Key: 0x%x",
-			childSecurityAssociationContext.InitiatorToResponderIntegrityKey,
 		)
 
 		// NAT-T concern
@@ -653,11 +638,16 @@ func (s *Server) handleIKEAUTH(
 
 		// Setup interface for ipsec
 		newXfrmiName := fmt.Sprintf("%s-%d", n3ueSelf.N3ueInfo.XfrmiName, n3ueSelf.N3ueInfo.XfrmiId)
-		if _, err = xfrm.SetupIPsecXfrmi(newXfrmiName,
+		if childSecurityAssociationContext.XfrmIface, err = xfrm.SetupIPsecXfrmi(newXfrmiName,
 			n3ueSelf.N3ueInfo.IPSecIfaceName,
 			n3ueSelf.N3ueInfo.XfrmiId,
 			n3ueSelf.UEInnerAddr); err != nil {
 			ikeLog.Errorf("Setup XFRM interface %s fail: %+v", newXfrmiName, err)
+			return
+		}
+		if err = xfrm.SetupIPsecRoute(childSecurityAssociationContext.XfrmIface,
+			n3ueSelf.UEInnerAddr.IP, n3ueSelf.N3iwfNASAddr.IP); err != nil {
+			ikeLog.Errorf("Setup XFRM route to N3IWF NAS endpoint fail: %+v", err)
 			return
 		}
 
@@ -788,6 +778,22 @@ func (s *Server) handleCREATECHILDSA(
 		ikeLog.Errorf("Create child security association context failed: %+v", err)
 		return
 	}
+	pduSessionID := n3ueSelf.PendingPduSessionID
+	if QoSInfo != nil {
+		pduSessionID = QoSInfo.PduSessionID
+	}
+	if pduSessionID < 1 || pduSessionID > 15 {
+		ikeLog.Errorf("CREATE_CHILD_SA has invalid/missing PDU session ID %d", pduSessionID)
+		return
+	}
+	childSecurityAssociationContextUserPlane.PduSessionID = pduSessionID
+	session := n3ueSelf.GetOrCreatePDUSession(pduSessionID)
+	userPlaneReady := false
+	defer func() {
+		if !userPlaneReady {
+			session.MarkUserPlaneReady(fmt.Errorf("Child-SA/XFRM setup did not complete"))
+		}
+	}()
 
 	err = ParseIPAddressInformationToChildSecurityAssociation(
 		childSecurityAssociationContextUserPlane,
@@ -838,16 +844,8 @@ func (s *Server) handleCREATECHILDSA(
 		childSecurityAssociationContextUserPlane.EncrKInfo.TransformID(),
 	)
 	ikeLog.Debugf(
-		"IPSec Encryption Key: 0x%x",
-		childSecurityAssociationContextUserPlane.InitiatorToResponderEncryptionKey,
-	)
-	ikeLog.Debugf(
 		"IPSec Integrity  Algorithm: %d",
 		childSecurityAssociationContextUserPlane.IntegKInfo.TransformID(),
-	)
-	ikeLog.Debugf(
-		"IPSec Integrity  Key: 0x%x",
-		childSecurityAssociationContextUserPlane.InitiatorToResponderIntegrityKey,
 	)
 	// ====== Outbound ======
 	ikeLog.Debugln("====== IPSec/Child SA for 3GPP UP Outbound =====")
@@ -862,16 +860,8 @@ func (s *Server) handleCREATECHILDSA(
 		childSecurityAssociationContextUserPlane.EncrKInfo.TransformID(),
 	)
 	ikeLog.Debugf(
-		"IPSec Encryption Key: 0x%x",
-		childSecurityAssociationContextUserPlane.ResponderToInitiatorEncryptionKey,
-	)
-	ikeLog.Debugf(
 		"IPSec Integrity  Algorithm: %d",
 		childSecurityAssociationContextUserPlane.IntegKInfo.TransformID(),
-	)
-	ikeLog.Debugf(
-		"IPSec Integrity  Key: 0x%x",
-		childSecurityAssociationContextUserPlane.ResponderToInitiatorIntegrityKey,
 	)
 	ikeLog.Debugf(
 		"State function: encr: %d, auth: %d",
@@ -885,11 +875,17 @@ func (s *Server) handleCREATECHILDSA(
 		n3ueSelf.N3ueInfo.XfrmiName,
 		n3ueSelf.N3ueInfo.XfrmiId,
 	)
-	if _, err = xfrm.SetupIPsecXfrmi(n3ueSelf.TemporaryXfrmiName, n3ueSelf.N3ueInfo.IPSecIfaceName,
+	if childSecurityAssociationContextUserPlane.XfrmIface, err = xfrm.SetupIPsecXfrmi(
+		n3ueSelf.TemporaryXfrmiName, n3ueSelf.N3ueInfo.IPSecIfaceName,
 		n3ueSelf.N3ueInfo.XfrmiId, n3ueSelf.UEInnerAddr); err != nil {
 		ikeLog.Errorf("Setup XFRMi interface %s fail: %+v", n3ueSelf.TemporaryXfrmiName, err)
+		return
 	}
 	ikeLog.Infof("Setup XFRM interface %s successfully", n3ueSelf.TemporaryXfrmiName)
+	session.SetUserPlane(n3ueSelf.TemporaryUPIPAddr, QoSInfo,
+		childSecurityAssociationContextUserPlane.XfrmIface, n3ueSelf.TemporaryXfrmiName)
+	session.MarkUserPlaneReady(nil)
+	userPlaneReady = true
 }
 
 func (s *Server) handleInformational(
@@ -1344,9 +1340,6 @@ func (s *Server) HandleNas(nasData []byte) ([]byte, bool) {
 		}
 		autn := decodedNAS.GetAUTN()
 
-		nasLog.Infof("RAND: %x", rand)
-		nasLog.Infof("AUTN: %x", autn)
-
 		// Perform AUTN verification and SQN synchronization
 		authResult, err := ue.VerifyAUTN(autn[:], rand[:])
 		if err != nil {
@@ -1386,9 +1379,6 @@ func (s *Server) HandleNas(nasData []byte) ([]byte, bool) {
 			return nil, false
 		}
 
-		nasLog.Infof("KnasEnc: %0x", ue.KnasEnc)
-		nasLog.Infof("KnasInt: %0x", ue.KnasInt)
-		nasLog.Infof("Kamf: %0x", ue.Kamf)
 		nasLog.Infof("AnType: %s", ue.AnType)
 		nasLog.Infof("SUPI: %s", ue.Supi)
 

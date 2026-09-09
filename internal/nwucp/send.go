@@ -58,7 +58,7 @@ func SendPduSessionEstablishmentRequest(ue *security.RanUeContext,
 	pdu := nasPacket.GetUlNasTransport_PduSessionEstablishmentRequest(
 		pduSessionId,
 		nasMessage.ULNASTransportRequestTypeInitialRequest,
-		"internet",
+		factory.N3ueInfo.SmPolicy[0].DNN,
 		&sNssai,
 	)
 

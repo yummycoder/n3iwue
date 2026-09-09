@@ -128,6 +128,8 @@ func (s *Server) serveConn(errChan chan<- error) {
 		switch nasMsg.GmmMessage.GetMessageType() {
 		case nas.MsgTypeRegistrationAccept:
 			evt = n3iwue_context.NewHandleRegistrationAcceptEvt(nasMsg)
+		case nas.MsgTypeConfigurationUpdateCommand:
+			evt = n3iwue_context.NewHandleConfigurationUpdateCommandEvt(nasMsg)
 		case nas.MsgTypeDLNASTransport:
 			evt = n3iwue_context.NewHandleDLNASTransportEvt(nasMsg)
 		case nas.MsgTypeDeregistrationRequestUETerminatedDeregistration:

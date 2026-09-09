@@ -103,6 +103,27 @@ func Start() {
 	// Graceful Shutdown
 	signalChannel := make(chan os.Signal, 1)
 	signal.Notify(signalChannel, os.Interrupt, syscall.SIGTERM)
+	controlSignalChannel := make(chan os.Signal, 2)
+	signal.Notify(controlSignalChannel, syscall.SIGUSR1, syscall.SIGUSR2)
+	go func() {
+		for {
+			select {
+			case <-n3iwueApp.ctx.Done():
+				return
+			case sig := <-controlSignalChannel:
+				switch sig {
+				case syscall.SIGUSR1:
+					logger.InitLog.Info("SIGUSR1: request release of PDU session 10")
+					n3iwueApp.nwucpServer.SendNwucpEvt(
+						n3iwue_context.NewReleasePduSessionEvt(10))
+				case syscall.SIGUSR2:
+					logger.InitLog.Info("SIGUSR2: request establishment of PDU session 10")
+					n3iwueApp.nwucpServer.SendNwucpEvt(
+						n3iwue_context.NewEstablishPduSessionEvt(10))
+				}
+			}
+		}
+	}()
 	go func() {
 		defer func() {
 			if p := recover(); p != nil {

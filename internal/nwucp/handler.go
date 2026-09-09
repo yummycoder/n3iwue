@@ -3,6 +3,7 @@ package nwucp
 import (
 	"fmt"
 	"net"
+	"strconv"
 
 	"github.com/vishvananda/netlink"
 
@@ -11,8 +12,11 @@ import (
 	"github.com/free5gc/n3iwue/internal/packet/nasPacket"
 	"github.com/free5gc/n3iwue/internal/vrf"
 	context "github.com/free5gc/n3iwue/pkg/context"
+	"github.com/free5gc/n3iwue/pkg/factory"
 	"github.com/free5gc/nas"
+	"github.com/free5gc/nas/nasMessage"
 	"github.com/free5gc/nas/nasType"
+	"github.com/free5gc/openapi/models"
 )
 
 func (s *Server) handleEvent(evt context.NwucpEvt) {
@@ -21,15 +25,56 @@ func (s *Server) handleEvent(evt context.NwucpEvt) {
 		s.handleStartNwucpConnEvt()
 	case *context.HandleRegistrationAcceptEvt:
 		s.handleRegistrationAccept(t)
+	case *context.HandleConfigurationUpdateCommandEvt:
+		s.handleConfigurationUpdateCommand(t)
 	case *context.HandleDLNASTransportEvt:
 		s.handleDLNASTransport(t)
 	case *context.StartPduSessionEstablishmentEvt:
 		s.handleStartPduSessionEstablishmentEvt()
+	case *context.ReleasePduSessionEvt:
+		s.handleReleasePduSessionEvt(t.PduSessionID)
+	case *context.EstablishPduSessionEvt:
+		s.handleEstablishPduSessionEvt(t.PduSessionID)
 	case *context.SendDeregistrationEvt:
 		s.handleSendDeregistrationEvt()
 	case *context.HandleDeregistrationReqUeTerminatedEvt:
 		s.handleDeregistrationReqUeTerminated(t)
 	}
+}
+
+func configurationUpdateNeedsAck(command *nasMessage.ConfigurationUpdateCommand) bool {
+	return command != nil && command.ConfigurationUpdateIndication != nil &&
+		command.ConfigurationUpdateIndication.GetACK() == 1
+}
+
+func (s *Server) handleConfigurationUpdateCommand(evt *context.HandleConfigurationUpdateCommandEvt) {
+	if evt == nil || evt.NasMsg == nil || evt.NasMsg.ConfigurationUpdateCommand == nil {
+		logger.NWuCPLog.Error("Configuration Update Command is nil")
+		return
+	}
+
+	command := evt.NasMsg.ConfigurationUpdateCommand
+	ackRequested := configurationUpdateNeedsAck(command)
+	registrationRequested := command.ConfigurationUpdateIndication != nil &&
+		command.ConfigurationUpdateIndication.GetRED() == 1
+	logger.NWuCPLog.Infof(
+		"Handled Configuration Update Command: ACK requested=%t RED=%t, NITZ full-name=%t short-name=%t local-time-zone=%t universal-time=%t daylight-saving=%t",
+		ackRequested,
+		registrationRequested,
+		command.FullNameForNetwork != nil,
+		command.ShortNameForNetwork != nil,
+		command.LocalTimeZone != nil,
+		command.UniversalTimeAndLocalTimeZone != nil,
+		command.NetworkDaylightSavingTime != nil,
+	)
+
+	if !ackRequested {
+		return
+	}
+
+	SendNasMsg(s.Context().RanUeContext, s.Context().N3IWFRanUe.TCPConnection,
+		nasPacket.GetConfigurationUpdateComplete())
+	logger.NWuCPLog.Info("Sent Configuration Update Complete")
 }
 
 func (s *Server) handleStartNwucpConnEvt() {
@@ -83,14 +128,21 @@ func (s *Server) handleDLNASTransport(evt *context.HandleDLNASTransportEvt) {
 			return
 		}
 
-		nwucpLog.Infof("PDU Address: %s", pduAddress.String())
-		n3ueSelf.N3ueInfo.DnIPAddr = pduAddress.String()
+		pduSessionID := nasMsg.PDUSessionEstablishmentAccept.GetPDUSessionID()
+		session := n3ueSelf.GetOrCreatePDUSession(pduSessionID)
+		xfrmiName, upIPAddr, qosInfo, err := session.WaitUserPlaneReady()
+		if err != nil {
+			nwucpLog.Errorf("User plane for accepted PDU session %d is not ready: %v", pduSessionID, err)
+			return
+		}
+		session.PDUAddress = append(net.IP(nil), pduAddress...)
+		nwucpLog.Infof("PDU session %d address: %s", pduSessionID, pduAddress.String())
 
-		newGREName := fmt.Sprintf("%s-id-%d", n3ueSelf.N3ueInfo.GreIfaceName, n3ueSelf.N3ueInfo.XfrmiId)
+		newGREName := fmt.Sprintf("%s-pdu-%d", n3ueSelf.N3ueInfo.GreIfaceName, pduSessionID)
 
 		// Create VRF
-		vrfName := fmt.Sprintf("vrf-pdu-%d", n3ueSelf.PduSessionCount)
-		vrfTableID := 100 + int(n3ueSelf.PduSessionCount)
+		vrfName := fmt.Sprintf("vrf-pdu-%d", pduSessionID)
+		vrfTableID := 100 + int(pduSessionID)
 
 		vrfLink, err := vrf.CreateOrGetVRF(vrfName, vrfTableID)
 		if err != nil {
@@ -100,8 +152,8 @@ func (s *Server) handleDLNASTransport(evt *context.HandleDLNASTransportEvt) {
 		nwucpLog.Infof("Use VRF %s (Table %d)", vrfName, vrfTableID)
 
 		var linkGREs map[uint8]*netlink.Link
-		if linkGREs, err = gre.SetupGreTunnels(newGREName, n3ueSelf.TemporaryXfrmiName, n3ueSelf.UEInnerAddr.IP,
-			n3ueSelf.TemporaryUPIPAddr, pduAddress, n3ueSelf.TemporaryQosInfo); err != nil {
+		if linkGREs, err = gre.SetupGreTunnels(newGREName, xfrmiName, n3ueSelf.UEInnerAddr.IP,
+			upIPAddr, pduAddress, qosInfo); err != nil {
 			nwucpLog.Errorf("Setup GRE tunnel %s Fail: %+v", newGREName, err)
 			return
 		}
@@ -149,9 +201,73 @@ func (s *Server) handleDLNASTransport(evt *context.HandleDLNASTransportEvt) {
 			}
 		}
 
-		n3ueSelf.PduSessionCount++
-		s.SendProcedureEvt(context.NewPduSessionEstablishedEvt())
+		session.GRETunnels = linkGREs
+		session.VRF, session.VRFName, session.RouteTable = vrfLink, vrfName, vrfTableID
+		s.SendProcedureEvt(context.NewPduSessionEstablishedEvt(pduSessionID))
+		if len(n3ueSelf.RequestedPduSessionIDs) != 0 {
+			s.SendNwucpEvt(context.NewStartPduSessionEstablishmentEvt())
+		}
+	case nas.MsgTypePDUSessionReleaseCommand:
+		s.handlePduSessionReleaseCommand(nasMsg.PDUSessionReleaseCommand)
 	}
+}
+
+func (s *Server) handlePduSessionReleaseCommand(command *nasMessage.PDUSessionReleaseCommand) {
+	if command == nil {
+		logger.NWuCPLog.Error("PDU session release command is nil")
+		return
+	}
+	id := command.GetPDUSessionID()
+	n3ueSelf := s.Context()
+	session := n3ueSelf.GetPDUSession(id)
+	if session == nil {
+		logger.NWuCPLog.Warnf("Release command for unknown PDU session %d", id)
+		return
+	}
+
+	sst, err := strconv.ParseInt(factory.N3ueInfo.SmPolicy[0].SNSSAI.SST, 16, 32)
+	if err != nil {
+		logger.NWuCPLog.Errorf("Parse SST for release complete: %v", err)
+		return
+	}
+	snssai := &models.Snssai{Sst: int32(sst), Sd: factory.N3ueInfo.SmPolicy[0].SNSSAI.SD}
+	pdu := nasPacket.GetUlNasTransport_PduSessionReleaseComplete(id,
+		nasMessage.ULNASTransportRequestTypeExistingPduSession,
+		factory.N3ueInfo.SmPolicy[0].DNN, snssai, command.GetPTI())
+	SendNasMsg(n3ueSelf.RanUeContext, n3ueSelf.N3IWFRanUe.TCPConnection, pdu)
+
+	greLinks, vrfLink := session.NetworkLinks()
+	for _, link := range greLinks {
+		if err := netlink.LinkDel(link); err != nil {
+			logger.NWuCPLog.Warnf("Delete session %d GRE %s: %v", id, link.Attrs().Name, err)
+		}
+	}
+	if vrfLink != nil {
+		if err := netlink.LinkDel(vrfLink); err != nil {
+			logger.NWuCPLog.Warnf("Delete session %d VRF %s: %v", id, vrfLink.Attrs().Name, err)
+		}
+	}
+	n3ueSelf.DeletePDUSession(id)
+	logger.NWuCPLog.Infof("PDU session %d released; local GRE/VRF state removed", id)
+}
+
+func (s *Server) handleReleasePduSessionEvt(id uint8) {
+	if id < 1 || id > 15 || s.Context().GetPDUSession(id) == nil {
+		logger.NWuCPLog.Warnf("Cannot release inactive/invalid PDU session %d", id)
+		return
+	}
+	pdu := nasPacket.GetUlNasTransport_PduSessionReleaseRequest(id)
+	SendNasMsg(s.Context().RanUeContext, s.Context().N3IWFRanUe.TCPConnection, pdu)
+	logger.NWuCPLog.Infof("Requested release of PDU session %d", id)
+}
+
+func (s *Server) handleEstablishPduSessionEvt(id uint8) {
+	if id < 1 || id > 15 || s.Context().GetPDUSession(id) != nil {
+		logger.NWuCPLog.Warnf("Cannot establish active/invalid PDU session %d", id)
+		return
+	}
+	s.Context().RequestedPduSessionIDs = append(s.Context().RequestedPduSessionIDs, id)
+	s.handleStartPduSessionEstablishmentEvt()
 }
 
 func (s *Server) handleStartPduSessionEstablishmentEvt() {
@@ -159,11 +275,25 @@ func (s *Server) handleStartPduSessionEstablishmentEvt() {
 	nwucpLog.Tracef("Get Start PduSession Establishment")
 
 	n3ueSelf := s.Context()
-	err := SendPduSessionEstablishmentRequest(n3ueSelf.RanUeContext, n3ueSelf.N3IWFRanUe.TCPConnection, n3ueSelf.PduSessionCount)
+	if len(n3ueSelf.RequestedPduSessionIDs) == 0 {
+		return
+	}
+	pduSessionID := n3ueSelf.RequestedPduSessionIDs[0]
+	n3ueSelf.RequestedPduSessionIDs = n3ueSelf.RequestedPduSessionIDs[1:]
+	if pduSessionID < 1 || pduSessionID > 15 {
+		nwucpLog.Errorf("Invalid PDU session ID %d", pduSessionID)
+		return
+	}
+	n3ueSelf.PendingPduSessionID = pduSessionID
+	n3ueSelf.GetOrCreatePDUSession(pduSessionID)
+	err := SendPduSessionEstablishmentRequest(n3ueSelf.RanUeContext, n3ueSelf.N3IWFRanUe.TCPConnection, pduSessionID)
 	if err != nil {
 		nwucpLog.Errorf("SendPduSessionEstablishmentRequest Fail: %+v", err)
 		return
 	}
+	nwucpLog.Infof("Requested PDU session %d DNN %s S-NSSAI SST=%s SD=%s", pduSessionID,
+		factory.N3ueInfo.SmPolicy[0].DNN, factory.N3ueInfo.SmPolicy[0].SNSSAI.SST,
+		factory.N3ueInfo.SmPolicy[0].SNSSAI.SD)
 }
 
 func (s *Server) handleSendDeregistrationEvt() {

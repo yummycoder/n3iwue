@@ -28,7 +28,11 @@ func InitN3UEContext() {
 	n3ueContext.N3IWFUe = new(context.N3IWFIkeUe)
 	n3ueContext.N3IWFUe.N3IWFChildSecurityAssociation = make(map[uint32]*context.ChildSecurityAssociation)
 	n3ueContext.N3IWFUe.TemporaryExchangeMsgIDChildSAMapping = make(map[uint32]*context.ChildSecurityAssociation)
-	n3ueContext.PduSessionCount = 1
+	n3ueContext.RequestedPduSessionIDs = append([]uint8(nil), n3ueContext.N3ueInfo.RequestedPDUSessionIDs...)
+	if len(n3ueContext.RequestedPduSessionIDs) == 0 {
+		n3ueContext.RequestedPduSessionIDs = []uint8{10}
+	}
+	n3ueContext.PduSessions = make(map[uint8]*context.PDUSession)
 
 	supi := n3ueContext.N3ueInfo.GetSUPI()
 	contextLog.Infof("SUPI: %+v", supi)

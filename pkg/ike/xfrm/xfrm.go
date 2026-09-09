@@ -243,6 +243,48 @@ func SetupIPsecXfrmi(
 	return xfrmi, nil
 }
 
+// SetupIPsecRoute makes the N3IWF NAS endpoint reachable through the control-
+// plane XFRM interface. The address assigned by IKE configuration can be a
+// host address, in which case assigning it to the interface does not create a
+// connected route to the peer.
+func SetupIPsecRoute(xfrmIface netlink.Link, localAddr, peerAddr net.IP) error {
+	route, err := ipsecRoute(xfrmIface, localAddr, peerAddr)
+	if err != nil {
+		return err
+	}
+	if err = netlink.RouteReplace(route); err != nil {
+		return fmt.Errorf("set IPsec route to %s via %s: %w",
+			route.Dst.IP, xfrmIface.Attrs().Name, err)
+	}
+
+	return nil
+}
+
+func ipsecRoute(xfrmIface netlink.Link, localAddr, peerAddr net.IP) (*netlink.Route, error) {
+	if xfrmIface == nil {
+		return nil, fmt.Errorf("set IPsec route: XFRM interface is nil")
+	}
+
+	localIPv4 := localAddr.To4()
+	if localIPv4 == nil {
+		return nil, fmt.Errorf("set IPsec route: invalid local IPv4 address %q", localAddr)
+	}
+	peerIPv4 := peerAddr.To4()
+	if peerIPv4 == nil {
+		return nil, fmt.Errorf("set IPsec route: invalid peer IPv4 address %q", peerAddr)
+	}
+
+	return &netlink.Route{
+		LinkIndex: xfrmIface.Attrs().Index,
+		Scope:     netlink.SCOPE_LINK,
+		Src:       localIPv4,
+		Dst: &net.IPNet{
+			IP:   peerIPv4,
+			Mask: net.CIDRMask(32, 32),
+		},
+	}, nil
+}
+
 func DeleteChildSAXfrm(childSA *context.ChildSecurityAssociation) error {
 	for idx := range childSA.XfrmStateList {
 		xfrmState := childSA.XfrmStateList[idx]

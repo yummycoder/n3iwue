@@ -19,6 +19,9 @@ const (
 	StartPduSessionEstablishment
 	SendDeregistration
 	HandleDeregistrationReqUeTerminated
+	ReleasePduSession
+	EstablishPduSession
+	HandleConfigurationUpdateCommand
 )
 
 var nwucpEvtTypeStr = []string{
@@ -28,6 +31,9 @@ var nwucpEvtTypeStr = []string{
 	StartPduSessionEstablishment:        "StartPduSessionEstablishment",
 	SendDeregistration:                  "SendDeregistration",
 	HandleDeregistrationReqUeTerminated: "HandleDeregistrationReqUeTerminated",
+	ReleasePduSession:                   "ReleasePduSession",
+	EstablishPduSession:                 "EstablishPduSession",
+	HandleConfigurationUpdateCommand:    "HandleConfigurationUpdateCommand",
 }
 
 func (e NwucpEvtType) String() string {
@@ -59,6 +65,18 @@ func NewHandleRegistrationAcceptEvt(nasMsg *nas.Message) *HandleRegistrationAcce
 	return &HandleRegistrationAcceptEvt{NasMsg: nasMsg}
 }
 
+type HandleConfigurationUpdateCommandEvt struct {
+	NasMsg *nas.Message
+}
+
+func (evt *HandleConfigurationUpdateCommandEvt) GetEventType() NwucpEvtType {
+	return HandleConfigurationUpdateCommand
+}
+
+func NewHandleConfigurationUpdateCommandEvt(nasMsg *nas.Message) *HandleConfigurationUpdateCommandEvt {
+	return &HandleConfigurationUpdateCommandEvt{NasMsg: nasMsg}
+}
+
 type HandleDLNASTransportEvt struct {
 	NasMsg *nas.Message
 }
@@ -75,6 +93,20 @@ type StartPduSessionEstablishmentEvt struct{}
 
 func (evt *StartPduSessionEstablishmentEvt) GetEventType() NwucpEvtType {
 	return StartPduSessionEstablishment
+}
+
+type ReleasePduSessionEvt struct{ PduSessionID uint8 }
+
+func (evt *ReleasePduSessionEvt) GetEventType() NwucpEvtType { return ReleasePduSession }
+func NewReleasePduSessionEvt(id uint8) *ReleasePduSessionEvt {
+	return &ReleasePduSessionEvt{PduSessionID: id}
+}
+
+type EstablishPduSessionEvt struct{ PduSessionID uint8 }
+
+func (evt *EstablishPduSessionEvt) GetEventType() NwucpEvtType { return EstablishPduSession }
+func NewEstablishPduSessionEvt(id uint8) *EstablishPduSessionEvt {
+	return &EstablishPduSessionEvt{PduSessionID: id}
 }
 
 func NewStartPduSessionEstablishmentEvt() *StartPduSessionEstablishmentEvt {

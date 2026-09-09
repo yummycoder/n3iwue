@@ -100,24 +100,7 @@ func (s *Server) handleEvent(evt n3iwue_context.ProcedureEvt) {
 	case *n3iwue_context.DeregistrationCompleteEvt:
 		s.handleDeregistrationCompleteEvt()
 	case *n3iwue_context.PduSessionEstablishedEvt:
-		// Test Connectivity
-		AppLog.Info("PduSession Created")
-		n3ueSelf := s.Context()
-
-		if err := s.TestConnectivity("9.9.9.9"); err != nil {
-			AppLog.Errorf("ping fail : %+v", err)
-		}
-		if err := s.TestConnectivity("1.1.1.1"); err != nil {
-			AppLog.Errorf("ping fail : %+v", err)
-		}
-		if err := s.TestConnectivity("8.8.8.8"); err != nil {
-			AppLog.Errorf("ping fail : %+v", err)
-		} else {
-			AppLog.Infof("ULCount=%x, DLCount=%x",
-				n3ueSelf.RanUeContext.ULCount.Get(),
-				n3ueSelf.RanUeContext.DLCount.Get())
-			AppLog.Info("Keep connection with N3IWF until receive SIGINT or SIGTERM")
-		}
+		AppLog.Info("PduSession Created; keep connection with N3IWF until receive SIGINT or SIGTERM")
 	default:
 		AppLog.Errorf("Unknown procedure event: %+v", evt)
 	}
@@ -127,9 +110,7 @@ func (s *Server) TestConnectivity(addr string) error {
 	n3ueSelf := s.Context()
 
 	// Calculate the VRF ID used for the last session
-	// Since PduSessionCount is incremented after session establishment, we subtract 1
-	vrfID := n3ueSelf.PduSessionCount - 1
-	vrfName := fmt.Sprintf("vrf-pdu-%d", vrfID)
+	vrfName := fmt.Sprintf("vrf-pdu-%d", n3ueSelf.PendingPduSessionID)
 
 	AppLog.Infof("Ping %s using VRF %s", addr, vrfName)
 
