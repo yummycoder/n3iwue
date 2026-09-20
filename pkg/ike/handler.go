@@ -28,10 +28,9 @@ import (
 	context "github.com/free5gc/n3iwue/pkg/context"
 	"github.com/free5gc/n3iwue/pkg/factory"
 	"github.com/free5gc/n3iwue/pkg/ike/xfrm"
+	"github.com/free5gc/n3iwue/pkg/snkey"
 	"github.com/free5gc/nas"
 	"github.com/free5gc/nas/nasMessage"
-	"github.com/free5gc/nas/security"
-	"github.com/free5gc/util/ueauth"
 )
 
 var nasLog *logrus.Entry
@@ -484,23 +483,14 @@ func (s *Server) handleIKEAUTH(
 		ikeSecurityAssociation.InitiatorMessageID++
 
 		// Authentication
-		// Derive Kn3iwf
-		P0 := make([]byte, 4)
-		binary.BigEndian.PutUint32(P0, ue.ULCount.Get()-1)
-		L0 := ueauth.KDFLen(P0)
-		P1 := []byte{security.AccessTypeNon3GPP}
-		L1 := ueauth.KDFLen(P1)
-
-		n3ueSelf.Kn3iwf, err = ueauth.GetKDFValue(
-			ue.Kamf,
-			ueauth.FC_FOR_KGNB_KN3IWF_DERIVATION,
-			P0,
-			L0,
-			P1,
-			L1,
-		)
+		// Derive K_N3IWF_SN for the MN-anchored NR-DC model: deterministic from
+		// K_AMF + SUPI + PDU session ID, with no NAS COUNT and no UE<->core
+		// exchange. Per-tunnel freshness comes from the IKE_SA_INIT nonces/DH
+		// (RFC 7296 2.14); this key only authenticates IKE_AUTH.
+		n3ueSelf.Kn3iwf, err = snkey.DeriveKN3IWFSN(
+			ue.Kamf, ue.Supi, n3ueSelf.PendingPduSessionID)
 		if err != nil {
-			ikeLog.Error("GetKn3iwf error: :", err)
+			ikeLog.Error("DeriveKN3IWFSN error: ", err)
 		}
 
 		var idPayload ike_message.IKEPayloadContainer
