@@ -137,6 +137,9 @@ type N3UEInfo struct {
 	IkeRetransmit          *ExponentialTimerValue `yaml:"IkeRetransmit" valid:"required"`
 	AutoReRegistration     bool                   `yaml:"AutoReRegistration" valid:"optional"`
 	RequestedPDUSessionIDs []uint8                `yaml:"RequestedPDUSessionIDs" valid:"optional"`
+	TunnelOnly             bool                   `yaml:"TunnelOnly" valid:"optional"`
+	ControlSocket          string                 `yaml:"ControlSocket" valid:"optional"`
+	Kn3iwfHex              string                 `yaml:"Kn3iwfHex" valid:"hexadecimal,optional"`
 }
 
 func (i *N3UEInfo) validate() (bool, error) {

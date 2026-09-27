@@ -203,6 +203,12 @@ func (s *Server) handleIKESAINIT(
 	// Stop continuous IKE_SA_INIT timer as IKE SA is now established
 	s.stopContinuousIkeSaInit()
 
+	if factory.N3ueInfo.TunnelOnly {
+		// MN-anchored single-round IKE_AUTH: skip the EAP states so the
+		// N3IWF's sole IKE_AUTH response is processed as the child SA.
+		ikeSecurityAssociation.State = IKEAUTH_Authentication
+	}
+
 	s.SendIkeAuth()
 }
 
@@ -494,7 +500,12 @@ func (s *Server) handleIKEAUTH(
 		}
 
 		var idPayload ike_message.IKEPayloadContainer
-		idPayload.BuildIdentificationInitiator(ike_message.ID_KEY_ID, []byte("UE"))
+		// MN-anchored NR-DC: assert the SUPI as the IKE identity so the N3IWF can
+		// correlate the AMF-delivered K_N3IWF_SN (keyed by SUPI) to this IKE SA.
+		// A false SUPI claim fails the K_N3IWF_SN-keyed AUTH, so this is an
+		// identity claim proven by the key check, not a trust hole. Keep the
+		// ID_KEY_ID type; only IDData changes, so signed-octets stay symmetric.
+		idPayload.BuildIdentificationInitiator(ike_message.ID_KEY_ID, []byte(ue.Supi))
 		idPayloadData, err := idPayload.Encode()
 		if err != nil {
 			ikeLog.Errorln(err)

@@ -2,6 +2,7 @@ package ike
 
 import (
 	"encoding/binary"
+	"encoding/hex"
 	"math/big"
 	"time"
 
@@ -136,8 +137,14 @@ func (s *Server) SendIkeAuth() {
 
 	var ikePayload ike_message.IKEPayloadContainer
 
-	// Identification
-	ikePayload.BuildIdentificationInitiator(ike_message.ID_KEY_ID, []byte("UE"))
+	// Identification. MN-anchored tunnel-only asserts the SUPI so the N3IWF
+	// can correlate the AMF-delivered K_N3IWF_SN; stock stays "UE".
+	var idType uint8 = ike_message.ID_KEY_ID
+	idData := []byte("UE")
+	if factory.N3ueInfo.TunnelOnly {
+		idData = []byte(factory.N3ueInfo.GetSUPI())
+	}
+	ikePayload.BuildIdentificationInitiator(idType, idData)
 
 	// Security Association
 	n3ueContext.SecurityAssociation = ikePayload.BuildSecurityAssociation()
@@ -184,6 +191,57 @@ func (s *Server) SendIkeAuth() {
 		[]byte{0, 0, 0, 0},
 		[]byte{255, 255, 255, 255},
 	)
+
+	if factory.N3ueInfo.TunnelOnly {
+		// MN-anchored single-round IKE_AUTH: K_N3IWF_SN is delivered
+		// out-of-band (Kn3iwfHex in the isolated test, or free-ran-ue over the
+		// control socket) - NOT derived here, since without EAP there is no
+		// network RAND to reproduce K_AMF. Fold the SUPI IDi into the signed
+		// octets and build AUTH keyed by the delivered key; per-tunnel
+		// freshness is the IKE_SA_INIT nonce/DH exchange (RFC 7296).
+		if len(n3ueContext.Kn3iwf) != 32 && factory.N3ueInfo.Kn3iwfHex != "" {
+			k, decErr := hex.DecodeString(factory.N3ueInfo.Kn3iwfHex)
+			if decErr != nil || len(k) != 32 {
+				ikeLog.Errorf("SendIkeAuth: bad Kn3iwfHex")
+				return
+			}
+			n3ueContext.Kn3iwf = k
+		}
+		if len(n3ueContext.Kn3iwf) != 32 {
+			ikeLog.Errorf("SendIkeAuth tunnel-only: no K_N3IWF_SN delivered")
+			return
+		}
+
+		var idp ike_message.IKEPayloadContainer
+		idp.BuildIdentificationInitiator(idType, idData)
+		idpData, encErr := idp.Encode()
+		if encErr != nil {
+			ikeLog.Errorf("SendIkeAuth: encode ID: %v", encErr)
+			return
+		}
+		if _, wErr := ikeSA.Prf_i.Write(idpData[4:]); wErr != nil {
+			ikeLog.Errorf("SendIkeAuth: prf_i write: %v", wErr)
+			return
+		}
+		ikeSA.ResponderSignedOctets = append(ikeSA.ResponderSignedOctets, ikeSA.Prf_i.Sum(nil)...)
+
+		prfFn := ikeSA.PrfInfo.Init(n3ueContext.Kn3iwf)
+		if _, wErr := prfFn.Write([]byte("Key Pad for IKEv2")); wErr != nil {
+			ikeLog.Errorf("SendIkeAuth: prf write: %v", wErr)
+			return
+		}
+		secret := prfFn.Sum(nil)
+		prfFn = ikeSA.PrfInfo.Init(secret)
+		prfFn.Reset()
+		if _, wErr := prfFn.Write(ikeSA.ResponderSignedOctets); wErr != nil {
+			ikeLog.Errorf("SendIkeAuth: prf write: %v", wErr)
+			return
+		}
+		ikePayload.BuildAuthentication(ike_message.SharedKeyMesageIntegrityCode, prfFn.Sum(nil))
+
+		cfg := ikePayload.BuildConfiguration(ike_message.CFG_REQUEST)
+		cfg.ConfigurationAttribute.BuildConfigurationAttribute(ike_message.INTERNAL_IP4_ADDRESS, nil)
+	}
 
 	ikeMessage := ike_message.NewMessage(
 		ikeSA.LocalSPI, ikeSA.RemoteSPI,
