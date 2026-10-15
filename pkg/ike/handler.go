@@ -90,6 +90,14 @@ func (s *Server) handleStartIkeSaEstablishment() {
 	ikeLog.Infoln("Handle Start IKE SA Establishment")
 	n3ueContext := s.Context()
 
+	// MN-anchored socket-keyed mode: wait for K_N3IWF_SN over the SN key
+	// channel before IKE. The channel listener re-fires this event once
+	// Kn3iwf is set; returning here avoids an unkeyed IKE_SA_INIT.
+	if factory.N3ueInfo.TunnelOnly && factory.N3ueInfo.Kn3iwfHex == "" && len(n3ueContext.Kn3iwf) != 32 {
+		ikeLog.Infoln("TunnelOnly socket-keyed: awaiting K_N3IWF_SN over SN key channel")
+		return
+	}
+
 	// Stop any existing continuous timer
 	s.stopContinuousIkeSaInit()
 

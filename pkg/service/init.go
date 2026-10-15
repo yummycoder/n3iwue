@@ -215,6 +215,10 @@ func (a *N3iwueApp) Run() error {
 	a.wg.Add(1)
 	go a.listenShutdownEvent()
 
+	// SN key channel listener (MN-anchored socket-keyed mode).
+	a.wg.Add(1)
+	go a.listenSNKeyChannel()
+
 	// Start IKE server
 	if err := a.ikeServer.Run(&a.wg); err != nil {
 		return err

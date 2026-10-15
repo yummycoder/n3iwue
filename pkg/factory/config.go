@@ -140,6 +140,7 @@ type N3UEInfo struct {
 	TunnelOnly             bool                   `yaml:"TunnelOnly" valid:"optional"`
 	ControlSocket          string                 `yaml:"ControlSocket" valid:"optional"`
 	Kn3iwfHex              string                 `yaml:"Kn3iwfHex" valid:"hexadecimal,optional"`
+	SNKeyChannel           string                 `yaml:"SNKeyChannel" valid:"-"`
 }
 
 func (i *N3UEInfo) validate() (bool, error) {
